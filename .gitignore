@@ -1,0 +1,39 @@
+# Data directories
+animals_data/
+test_data/
+data/enwiki-latest-pages-articles.xml.bz2
+wiki_chunks/
+wiki_test_chunks/
+wiki_data/
+data/dataset_wiki.json
+filtered_wiki/
+data/*.xml
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

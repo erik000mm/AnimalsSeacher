@@ -1,0 +1,6 @@
+
+Dopyt: aardvark
+Dopyt: reptile AND least_concern
+Dopyt: white AND (mammal OR bird)
+Dopyt: skin_type:fur
+Dopyt: mammal AND (skin_type:fur OR skin_type:hair)
