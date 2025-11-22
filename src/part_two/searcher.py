@@ -87,7 +87,7 @@ def searcher(argv: List[str] = None):
         description="Searcher",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("query", help="Query string (supports field prefixes like name:cat)")
+    parser.add_argument("query", help="Query string")
     parser.add_argument("--index", default=os.path.join("index", "animals"), help="Lucene index")
     parser.add_argument("--top", type=int, default=5, help="Number of top results to return")
     

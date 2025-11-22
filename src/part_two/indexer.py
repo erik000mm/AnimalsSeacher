@@ -25,6 +25,7 @@ def remove_json_comments(text):
     text = re.sub(r"(^|\s)//.*$", "", text, flags=re.M)
     return text
 
+
 def load_animals_json(path):
     with open(path, "r", encoding="utf-8") as f:
         raw = f.read()
@@ -33,6 +34,7 @@ def load_animals_json(path):
     except json.JSONDecodeError:
         cleaned = remove_json_comments(raw)
         return json.loads(cleaned)
+
 
 def flatten_content(value):
     if value is None:
@@ -61,10 +63,31 @@ def flatten_content(value):
         return out
     return [str(value)]
 
+
+def add_fields(doc, data, prefix=""):
+    if isinstance(data, dict):
+        for key, value in data.items():
+            new_prefix = f"{prefix}.{key}" if prefix else key
+            add_fields(doc, value, new_prefix)
+    elif isinstance(data, list):
+        for item in data:
+            add_fields(doc, item, prefix)
+    else:
+        if data is not None:
+            val_str = str(data)
+            if val_str:
+                doc.add(TextField(prefix, val_str, Field.Store.YES))
+                if "." in prefix:
+                    leaf_key = prefix.split(".")[-1]
+                    doc.add(TextField(leaf_key, val_str, Field.Store.YES))
+
+
 def create_document(animal_name, details_obj, source_path):
     doc = Document()
     doc.add(StringField("exact_name", animal_name, Field.Store.YES))
     doc.add(TextField("name", animal_name, Field.Store.YES))
+
+    add_fields(doc, details_obj)
 
     parts: List[str] = []
     parts.extend(flatten_content(details_obj))
