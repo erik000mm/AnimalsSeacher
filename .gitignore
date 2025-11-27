@@ -9,6 +9,7 @@ data/dataset_wiki.json
 filtered_wiki/
 data/*.xml
 src/part_two/index/
+data
 
 # Python cache
 __pycache__/

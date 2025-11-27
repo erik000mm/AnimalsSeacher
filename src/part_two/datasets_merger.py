@@ -7,9 +7,9 @@ import re
 
 from pyspark.sql import SparkSession, functions as F, types as T, Window
 
-ANIMALS_DATASET = "../../data/az_animals_dataset.json"
-WIKI_DATASET = "../../data/dataset_wiki.json"
-OUTPUT_PATH = "../../data/all_animals_dataset.json"
+ANIMALS_DATASET = "data/az_animals_dataset.json"
+WIKI_DATASET = "data/dataset_wiki.json"
+OUTPUT_PATH = "data/all_animals_dataset.json"
 
 
 def norm_str(string):
@@ -50,8 +50,9 @@ def build_wiki_rows(data):
     return rows
 
 
-def create_dataframe_from_list(spark: SparkSession, rows, schema):
-    return spark.createDataFrame(rows, schema=schema)
+def create_dataframe_from_list(spark: SparkSession, rows, schema, num_partitions: int = 64):
+    rdd = spark.sparkContext.parallelize(rows or [], numSlices=num_partitions)
+    return spark.createDataFrame(rdd, schema=schema)
 
 
 def get_schemas():
@@ -87,9 +88,11 @@ def merge_datasets(test_path, wiki_path, output_path):
     spark = SparkSession.builder \
         .appName("DatasetMerger") \
         .master("local[*]") \
-        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
-        .config("spark.executor.memory", "12g") \
-        .config("spark.driver.memory", "12g") \
+        .config("spark.sql.execution.arrow.pyspark.enabled", "false") \
+        .config("spark.python.worker.faulthandler.enabled", "true") \
+        .config("spark.sql.shuffle.partitions", "64") \
+        .config("spark.executor.memory", "8g") \
+        .config("spark.driver.memory", "8g") \
         .getOrCreate()
 
 
@@ -250,9 +253,10 @@ def merge_datasets(test_path, wiki_path, output_path):
         "matched_records": 0,
         "unmatched_records": 0,
         "match_type_counts": {},
-        "appended_scientific_from_test": 0,
+        "appended_scientific": 0,
         "wiki_alt_names_merged": 0,
-        "with_meta_wiki_id": 0
+        "with_meta_wiki_id": 0,
+        "wiki_only_records": 0
     }
     for r in rows:
         test_original = test_data.get(r['key']) or {}
@@ -368,14 +372,80 @@ def merge_datasets(test_path, wiki_path, output_path):
             ts_join = " ".join([t.strip() for t in ts if isinstance(t, str) and t.strip()])
             if ts_join:
                 abs_clean = f"{abs_clean} {ts_join}".strip() if abs_clean else ts_join
-        # Set cleaned/combined abstract back
         if abs_clean is not None:
             merged["abstract"] = abs_clean
-        # Remove text_sections after combining
+        # Remove text_sections 
         if "text_sections" in merged:
             del merged["text_sections"]
 
         output_dict[r["key"]] = merged
+
+    # Include wiki-only records
+    matched_wiki_keys = set([r["wiki_key"] for r in rows if r["wiki_key"] is not None])
+    for wk, wval in wiki_data.items():
+        if wk in matched_wiki_keys:
+            continue
+        merged = {}
+        merged.update(wval or {})
+        # Map wiki fields to animals schema equivalents
+        # common_name from animal_name
+        if merged.get("animal_name") and not merged.get("common_name"):
+            merged["common_name"] = merged.get("animal_name")
+        # common_name_alternative from animal_name_alternative
+        ana = merged.get("animal_name_alternative")
+        if ana is not None and not merged.get("common_name_alternative"):
+            merged["common_name_alternative"] = ana if isinstance(ana, list) else [ana]
+        # Ensure scientific_names exists and includes taxon/genus+species if present
+        sci_names = merged.get("scientific_names")
+        if sci_names is None:
+            sci_names = []
+        if isinstance(sci_names, str):
+            sci_names = [sci_names]
+        taxon = merged.get("taxon")
+        gs_raw = None
+        if merged.get("genus") and merged.get("species"):
+            gs_raw = f"{merged.get('genus')} {merged.get('species')}".strip()
+        for candidate in [taxon, gs_raw]:
+            if candidate and candidate not in sci_names:
+                sci_names.append(candidate)
+        if sci_names:
+            merged["scientific_names"] = list(dict.fromkeys(sci_names))
+        # Wiki_id into meta and remove top-level wiki_id
+        meta = merged.get("meta")
+        if meta is None or not isinstance(meta, dict):
+            meta = {} if meta is None else {"original_meta": meta}
+        meta["wiki_id"] = merged.get("wiki_id")
+        merged["meta"] = meta
+        if meta.get("wiki_id") is not None:
+            stats["with_meta_wiki_id"] += 1
+        if "wiki_id" in merged:
+            del merged["wiki_id"]
+        # Clean abstract and combine text_sections
+        abs_text = merged.get("abstract")
+        if isinstance(abs_text, str):
+            try:
+                abs_clean = html.unescape(abs_text)
+            except Exception:
+                abs_clean = abs_text
+            abs_clean = re.sub(r"''+", "", abs_clean)
+            abs_clean = re.sub(r"\s+", " ", abs_clean).strip()
+        else:
+            abs_clean = None
+        ts = merged.get("text_sections")
+        if isinstance(ts, list) and ts:
+            ts_join = " ".join([t.strip() for t in ts if isinstance(t, str) and t.strip()])
+            if ts_join:
+                abs_clean = f"{abs_clean} {ts_join}".strip() if abs_clean else ts_join
+        if abs_clean is not None:
+            merged["abstract"] = abs_clean
+        if "text_sections" in merged:
+            del merged["text_sections"]
+        # Remove redundant fields
+        for redundant_key in ["animal_name", "status", "taxon", "matched_name", "genus"]:
+            if redundant_key in merged:
+                del merged[redundant_key]
+        output_dict[str(wk)] = merged
+        stats["wiki_only_records"] += 1
 
     with open(output_path, "w", encoding="utf-8") as out_f:
         json.dump(output_dict, out_f, ensure_ascii=False, indent=2)
